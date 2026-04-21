@@ -1,160 +1,148 @@
 "use client";
-import React, { useEffect, useState, useRef } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Activity, ShieldCheck, Zap, Link as LinkIcon, AlertCircle } from 'lucide-react';
+
+import React, { useState, useEffect, useRef } from "react";
+import { Activity, Shield, Zap, Globe, Lock, AlertCircle } from "lucide-react";
+
+// --- Utility: Safe WebSocket URL Construction ---
+const getWsUrl = (inputUrl: string) => {
+  if (!inputUrl) return "";
+  let processed = inputUrl.trim();
+  if (!processed.startsWith("http") && !processed.startsWith("ws")) {
+    processed = `http://${processed}`;
+  }
+  try {
+    const url = new URL(processed);
+    // Force WSS if the dashboard is running on HTTPS (Codespaces reality)
+    const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+    url.protocol = isHttps ? "wss:" : "ws:";
+    
+    if (!url.pathname.endsWith("/ws")) {
+      url.pathname = url.pathname.replace(/\/$/, "") + "/ws";
+    }
+    return url.toString();
+  } catch (e) {
+    const protocol = typeof window !== "undefined" && window.location.protocol === "https:" ? "wss:" : "ws:";
+    const cleanHost = inputUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    return `${protocol}//${cleanHost}/ws`;
+  }
+};
 
 export default function Home() {
-  const [data, setData] = useState<any[]>([]);
-  const [currentCount, setCurrentCount] = useState(0);
-  const [status, setStatus] = useState("Waiting for URL");
-  const [mounted, setMounted] = useState(false);
-  const [wsUrl, setWsUrl] = useState("");
+  const [wsUrl, setWsUrl] = useState("localhost:8080");
+  const [status, setStatus] = useState("Disconnected");
+  const [metrics, setMetrics] = useState({
+    total: 0,
+    tcp: 0,
+    udp: 0,
+    icmp: 0,
+  });
+  
   const socketRef = useRef<WebSocket | null>(null);
 
+  // Clean up connection on unmount
   useEffect(() => {
-    setMounted(true);
+    return () => {
+      if (socketRef.current) socketRef.current.close();
+    };
   }, []);
 
   const connectToSentinel = () => {
-    if (!wsUrl) return;
-    
-    // Cleanup existing connection
-    if (socketRef.current) {
-      socketRef.current.close();
-    }
+    if (socketRef.current) socketRef.current.close();
 
+    const formattedUrl = getWsUrl(wsUrl);
     setStatus("Connecting...");
-    
-    // Ensure protocol is wss:// for Codespaces
-    const formattedUrl = wsUrl.startsWith('http') 
-      ? wsUrl.replace('http', 'ws') 
-      : wsUrl;
 
-    const socket = new WebSocket(formattedUrl.endsWith('/ws') ? formattedUrl : `${formattedUrl}/ws`);
-    socketRef.current = socket;
+    try {
+      const socket = new WebSocket(formattedUrl);
+      socketRef.current = socket;
 
-    socket.onopen = () => {
-      setStatus("Sentinel Active");
-      console.log("Connected to Kernel Agent");
-    };
+      socket.onopen = () => setStatus("Sentinel Active");
+      
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          // Phase 2 Payload check
+          if (data.metrics) {
+            setMetrics(data.metrics);
+          }
+        } catch (err) {
+          console.error("Failed to parse Sentinel payload", err);
+        }
+      };
 
-    socket.onclose = () => {
-      setStatus("Disconnected");
-    };
-
-    socket.onerror = () => {
-      setStatus("Connection Error");
-    };
-
-    socket.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        setCurrentCount(msg.packets);
-        
-        setData((prev) => {
-          const newData = [...prev, { 
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), 
-            packets: msg.packets 
-          }];
-          return newData.slice(-30); // Show last 30 seconds
-        });
-      } catch (e) {
-        console.error("Data Parse Error", e);
-      }
-    };
+      socket.onclose = () => setStatus("Disconnected");
+      socket.onerror = () => setStatus("Connection Error");
+    } catch (err) {
+      setStatus("Setup Failed");
+    }
   };
 
-  if (!mounted) return <div className="min-h-screen bg-black" />;
-
   return (
-    <div className="min-h-screen bg-black text-zinc-100 p-4 md:p-8 font-sans">
-      {/* Header */}
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b border-zinc-800 pb-8 gap-6">
+    <main className="min-h-screen bg-black text-slate-200 p-8 font-sans">
+      {/* Header Section */}
+      <div className="max-w-6xl mx-auto mb-12 flex justify-between items-end border-b border-slate-800 pb-6">
         <div>
-          <h1 className="text-4xl font-bold tracking-tighter flex items-center gap-3 italic">
-            <ShieldCheck className="text-emerald-500 w-10 h-10" />
-            SENTINEL-NODE
+          <h1 className="text-5xl font-black tracking-tighter text-white flex items-center gap-3">
+            <Shield className="w-12 h-12 text-blue-500" /> SENTINEL <span className="text-blue-500 text-xl font-mono">NODE</span>
           </h1>
-          <p className="text-zinc-500 font-medium tracking-wide ml-1">SYSTEM ARCHITECTURE: PHASE 1 (PULSE)</p>
+          <p className="text-slate-500 font-mono mt-2 uppercase tracking-widest text-xs">
+            Phase 2: Protocol Dissector & Kernel Telemetry
+          </p>
         </div>
+        
+        <div className="flex gap-2">
+          <input 
+            type="text" 
+            value={wsUrl}
+            onChange={(e) => setWsUrl(e.target.value)}
+            className="bg-slate-900 border border-slate-700 px-4 py-2 rounded font-mono text-sm focus:outline-none focus:border-blue-500 transition-colors"
+          />
+          <button 
+            onClick={connectToSentinel}
+            className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded font-bold transition-all uppercase text-sm"
+          >
+            Connect
+          </button>
+        </div>
+      </div>
 
-        <div className="flex flex-col gap-3 w-full md:w-auto">
-          <div className="flex gap-2">
-            <input 
-              type="text" 
-              placeholder="Paste Port 8080 URL here..."
-              className="bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 text-sm w-full md:w-64 focus:outline-none focus:border-emerald-500 transition-all"
-              value={wsUrl}
-              onChange={(e) => setWsUrl(e.target.value)}
-            />
-            <button 
-              onClick={connectToSentinel}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-2"
-            >
-              <LinkIcon size={16} /> Connect
-            </button>
-          </div>
-          <div className="flex items-center gap-2 justify-end">
-             <div className={`w-2 h-2 rounded-full ${status === "Sentinel Active" ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
-             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">{status}</span>
-          </div>
-        </div>
-      </header>
+      {/* Grid Section */}
+      <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatCard label="Total Packets" value={metrics.total} icon={<Activity className="text-blue-400" />} />
+        <StatCard label="TCP Segments" value={metrics.tcp} icon={<Zap className="text-yellow-400" />} />
+        <StatCard label="UDP Datagrams" value={metrics.udp} icon={<Globe className="text-purple-400" />} />
+        <StatCard label="ICMP (Ping)" value={metrics.icmp} icon={<Lock className="text-green-400" />} />
+      </div>
 
-      <main className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Metric Card */}
-        <div className="bg-zinc-900/50 border border-zinc-800 p-8 rounded-3xl backdrop-blur-sm shadow-2xl">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-zinc-500 font-bold uppercase tracking-widest text-xs">Kernel Packet Count</h2>
-            <Activity className="text-emerald-500 w-5 h-5" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-7xl font-mono font-black text-white tracking-tighter">
-              {currentCount.toLocaleString()}
-            </span>
-            <span className="text-zinc-500 text-sm mt-4 flex items-center gap-2">
-                <AlertCircle size={14} className="text-emerald-500" />
-                Live XDP_PASS Telemetry
-            </span>
-          </div>
-        </div>
+      {/* Status Footer */}
+      <div className="max-w-6xl mx-auto mt-12 flex items-center gap-4 bg-slate-900/50 p-4 rounded border border-slate-800">
+        <div className={`w-3 h-3 rounded-full animate-pulse ${status === "Sentinel Active" ? 'bg-green-500' : 'bg-red-500'}`} />
+        <span className="font-mono text-xs uppercase tracking-widest">{status}</span>
+        <span className="text-slate-700 ml-auto font-mono text-[10px]">XDP_PROG_TYPE_SENTINEL_PULSE</span>
+      </div>
+    </main>
+  );
+}
 
-        {/* Visualizer Card */}
-        <div className="lg:col-span-2 bg-zinc-900/50 border border-zinc-800 p-8 rounded-3xl backdrop-blur-sm shadow-2xl">
-           <h2 className="text-zinc-500 font-bold uppercase tracking-widest text-xs mb-8 flex items-center gap-2">
-            <Zap className="text-yellow-500 w-4 h-4" /> Live Network Throughput
-          </h2>
-          
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data}>
-                <CartesianGrid strokeDasharray="2 2" stroke="#27272a" vertical={false} />
-                <XAxis dataKey="time" hide />
-                <YAxis 
-                    stroke="#52525b" 
-                    fontSize={12} 
-                    tickLine={false} 
-                    axisLine={false} 
-                    tickFormatter={(val) => val.toLocaleString()}
-                />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '12px' }}
-                  itemStyle={{ color: '#10b981' }}
-                  cursor={{ stroke: '#3f3f46' }}
-                />
-                <Line 
-                  type="stepAfter" 
-                  dataKey="packets" 
-                  stroke="#10b981" 
-                  strokeWidth={3} 
-                  dot={false}
-                  animationDuration={0}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+interface StatCardProps {
+  label: string;
+  value: number;
+  icon: React.ReactNode;
+}
+
+function StatCard({ label, value, icon }: StatCardProps) {
+  return (
+    <div className="bg-slate-900 border border-slate-800 p-6 rounded-lg hover:border-slate-600 transition-all group">
+      <div className="flex justify-between items-start mb-4">
+        <span className="text-slate-500 font-mono text-xs uppercase tracking-wider">{label}</span>
+        <div className="opacity-50 group-hover:opacity-100 transition-opacity">
+          {icon}
         </div>
-      </main>
+      </div>
+      {/* REALITY CHECK: Defensive value handling with fallback to 0 */}
+      <p className="text-4xl font-mono font-black text-white tracking-tighter">
+        {(value ?? 0).toLocaleString()}
+      </p>
     </div>
   );
 }

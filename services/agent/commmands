@@ -1,0 +1,17 @@
+Final Execution Protocol
+Build the Agent:
+
+Bash
+go build -o sentinel-agent
+sudo ./sentinel-agent
+
+Launch with Root Privileges:
+
+Bash
+n devStart Dashboard (New Terminal):
+
+Bash
+cd ../../dashboard
+npm run dev
+
+link ->  wss://verbose-broccoli-gv56v7w7x942v4p6-8080.app.github.dev/ws
